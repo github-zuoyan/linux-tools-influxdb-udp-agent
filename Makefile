@@ -13,8 +13,11 @@ CFLAGS += \
 	-O3 \
 	-g \
 	-D_GNU_SOURCE \
+	-std=gnu99  \
 
 all: ${BINARY}
+
+run: ${BINARY}
 	./$< -p 8888 localhost
 
 ${BINARY}: ${SOURCES:.c=.o}
