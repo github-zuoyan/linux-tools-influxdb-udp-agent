@@ -1,4 +1,5 @@
-BINARY = influxdb-agent
+PLATFORM = $(shell uname -p)
+BINARY = influxdb_agent.${PLATFORM}
 
 SOURCES = \
 	main.c \
