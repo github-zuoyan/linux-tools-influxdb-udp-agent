@@ -478,3 +478,55 @@ int influxdb_serialize_net_stat(char *stat,
     *buflen = offset;
     return 0;
 }
+
+int influxdb_serialize_softnet_stat(char *stat,
+                                    const char *hostname,
+                                    const struct timespec *ts,
+                                    char *buf, size_t *buflen) {
+    assert(stat != NULL);
+    assert(hostname != NULL);
+    assert(ts != NULL);
+    assert(buf != NULL);
+    assert(buflen != NULL);
+
+    size_t cpu = 0;
+    size_t offset = 0;
+    for(char *stash = NULL, *line = strtok_r(stat, "\n", &stash);
+        line != NULL;
+        line = strtok_r(NULL, "\n", &stash), ++cpu) {
+        unsigned int processed = 0, dropped = 0, timeout = 0;
+        unsigned int unused = 0;
+        unsigned int cpu_collision = 0, received_rps = 0, flow_limit_count = 0;
+        HANDLE_RESULT(
+            sscanf(line, "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x",
+                   &processed, &dropped, &timeout,
+                   &unused, &unused, &unused, &unused, &unused,
+                   &cpu_collision, &received_rps, &flow_limit_count) < 11,
+            goto NEXT_TOKEN,
+            "influxdb_serialize_softnet_stat: "
+            "unable deserialize string %s\n", line);
+
+        char *b = buf + offset;
+        size_t blen = *buflen - offset;
+        HANDLE_RESULT(format(&b, &blen,
+                             "softnet,cpu=%zu,hostname=%s "
+                             "processed=%u,dropped=%u,timeout=%u,"
+                             "cpu_collision=%u,received_rps=%u,flow_limit_count=%u "
+                             "%ld%09ld\n",
+                             cpu, hostname,
+                             processed, dropped, timeout,
+                             cpu_collision, received_rps, flow_limit_count,
+                             ts->tv_sec, ts->tv_nsec) == -1,
+                      goto NEXT_TOKEN,
+                      "influxdb_serialize_softnet_stat: "
+                      "failed to serialize for cpu%zu", cpu);
+        assert(*b == 0);
+        offset = *buflen - blen;
+        assert(buf[offset] == 0);
+NEXT_TOKEN:
+        ;
+    }
+    assert(buf[offset] == 0);
+    *buflen = offset;
+    return 0;
+}

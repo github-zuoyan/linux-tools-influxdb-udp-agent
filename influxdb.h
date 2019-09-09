@@ -22,4 +22,9 @@ int influxdb_serialize_net_stat(char *stat, /* content of /proc/net/(netstat|snm
                                 const struct timespec *ts,
                                 char *buf, size_t *buflen);
 
+int influxdb_serialize_softnet_stat(char *stat,
+                                    const char *hostname,
+                                    const struct timespec *ts,
+                                    char *buf, size_t *buflen);
+
 #endif // INFLUXDB_H_

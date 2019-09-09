@@ -73,6 +73,23 @@ CLEANUP:
     return *contentlen;
 }
 
+int serialize_softnet_stat(const char *hostname,
+                           const struct timespec *ts,
+                           char *message, size_t *messagelen) {
+    assert(hostname != NULL);
+    assert(ts != NULL);
+    assert(message != NULL);
+    assert(messagelen != NULL);
+
+    char stat[65535];
+    size_t statlen = sizeof(stat);
+    HANDLE_RESULT(read_file("/proc/net/softnet_stat", stat, &statlen) < 0,
+                  return -1, "serialize_softnet_stat: read_file");
+    stat[statlen] = 0;
+    HANDLE_RESULT(influxdb_serialize_softnet_stat(stat, hostname, ts, message, messagelen) < 0,
+                  return -1, "serialize_softnet_stat: influxdb_serialize_softnet_stat");
+    return 0;
+}
 
 int serialize_net_stat(const char *hostname,
                        const struct timespec *ts,
@@ -98,7 +115,7 @@ int serialize_net_stat(const char *hostname,
     netstatlen -= snmplen;
     HANDLE_RESULT(read_file("/proc/net/netstat", stat + snmplen, &netstatlen) < 0,
                   return -1, "serialize_net_stat[/proc/net/netstat]: read_file");
-
+    stat[snmplen + netstatlen] = 0;
     HANDLE_RESULT(influxdb_serialize_net_stat(stat, tags, hostname, ts, message, messagelen) < 0,
                   return -1, "serialize_net_stat: influxdb_serialize_net_stat");
     return 0;
@@ -116,7 +133,7 @@ int serialize_proc_stat(const char *hostname,
     size_t proclen = sizeof(proc);
     HANDLE_RESULT(read_file("/proc/stat", proc, &proclen) < 0,
                   return -1, "serialize_proc_stat: read_file");
-
+    proc[proclen] = 0;
     HANDLE_RESULT(influxdb_serialize_proc_stat(proc, hostname, ts, message, messagelen) < 0,
                   return -1, "serialize_proc_stat: influxdb_serialize_proc_stat");
     return 0;
@@ -152,6 +169,7 @@ typedef int(*serializer)(const char *hostname,
 static const serializer serializers[] = {
     &serialize_proc_stat,
     &serialize_net_stat,
+    &serialize_softnet_stat,
     &serialize_nic_stat,
     &serialize_memory_stat,
     NULL
