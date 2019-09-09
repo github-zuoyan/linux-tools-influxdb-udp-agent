@@ -16,4 +16,10 @@ int influxdb_serialize_proc_stat(char *stat, /* content of /proc/stat */
                                  const struct timespec *ts,
                                  char *buf, size_t *buflen);
 
+int influxdb_serialize_net_stat(char *stat, /* content of /proc/net/(netstat|snmp) */
+                                const char **tags,
+                                const char *hostname,
+                                const struct timespec *ts,
+                                char *buf, size_t *buflen);
+
 #endif // INFLUXDB_H_

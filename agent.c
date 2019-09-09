@@ -50,6 +50,59 @@ NEXT_ADDRESS:
     return s;
 }
 
+int read_file(const char *filename,
+              char *content,
+              size_t *contentlen) {
+    assert(filename != NULL);
+    assert(content != NULL);
+    assert(contentlen != NULL);
+
+    int fd = -1;
+    HANDLE_POSIX_RESULT(fd = open(filename, O_CLOEXEC | O_NONBLOCK, O_RDONLY),
+                        return -1, "read_file(%s): open", filename);
+
+    int r = read(fd, content, *contentlen);
+    HANDLE_POSIX_RESULT(r, goto CLEANUP, "read_file(%s): read", filename);
+    HANDLE_RESULT((size_t) r >= *contentlen,
+                  goto CLEANUP, "read_file(%s): buffer too small", filename);
+    content[*contentlen - 1] = 0;
+    *contentlen = r;
+
+CLEANUP:
+    HANDLE_POSIX_RESULT(close(fd), (void)fd, "read_file(%s): close", filename);
+    return *contentlen;
+}
+
+
+int serialize_net_stat(const char *hostname,
+                       const struct timespec *ts,
+                       char *message, size_t *messagelen) {
+    assert(hostname != NULL);
+    assert(ts != NULL);
+    assert(message != NULL);
+    assert(messagelen != NULL);
+
+    static const char *tags[] = {
+        "Ip", "Icmp", "IcmpMsg", "Tcp", "Udp", /* SNMP tags */
+        "TcpExt", "IpExt", /* NetStat tags */
+        NULL
+    };
+
+    char stat[65535];
+    size_t snmplen = sizeof(stat);
+    size_t netstatlen = sizeof(stat);
+
+    HANDLE_RESULT(read_file("/proc/net/snmp", stat, &snmplen) < 0,
+                  return -1, "serialize_net_stat[/proc/net/snmp]: read_file");
+
+    netstatlen -= snmplen;
+    HANDLE_RESULT(read_file("/proc/net/netstat", stat + snmplen, &netstatlen) < 0,
+                  return -1, "serialize_net_stat[/proc/net/netstat]: read_file");
+
+    HANDLE_RESULT(influxdb_serialize_net_stat(stat, tags, hostname, ts, message, messagelen) < 0,
+                  return -1, "serialize_net_stat: influxdb_serialize_net_stat");
+    return 0;
+}
 
 int serialize_proc_stat(const char *hostname,
                         const struct timespec *ts,
@@ -59,23 +112,14 @@ int serialize_proc_stat(const char *hostname,
     assert(message != NULL);
     assert(messagelen != NULL);
 
-    int procfd = -1;
-    HANDLE_POSIX_RESULT(procfd = open("/proc/stat", O_CLOEXEC | O_NONBLOCK, O_RDONLY),
-                        return -1, "serialize_proc_stat: open");
-
-    int result = -1;
     char proc[65535];
-    HANDLE_POSIX_RESULT(read(procfd, proc, sizeof(proc)),
-                        goto CLEANUP, "serialize_proc_stat: read");
-    proc[sizeof(proc) - 1] = 0;
+    size_t proclen = sizeof(proc);
+    HANDLE_RESULT(read_file("/proc/stat", proc, &proclen) < 0,
+                  return -1, "serialize_proc_stat: read_file");
 
-    HANDLE_RESULT((result = influxdb_serialize_proc_stat(proc, hostname, ts, message, messagelen)) == -1,
-                  goto CLEANUP, "serialize_proc_stat: influxdb_serialize_proc_stat");
-
-CLEANUP:
-    HANDLE_POSIX_RESULT(close(procfd),
-                        (void)procfd, "serialize_proc_stat: close");
-    return result;
+    HANDLE_RESULT(influxdb_serialize_proc_stat(proc, hostname, ts, message, messagelen) < 0,
+                  return -1, "serialize_proc_stat: influxdb_serialize_proc_stat");
+    return 0;
 }
 
 int serialize_nic_stat(const char *hostname,
@@ -107,6 +151,7 @@ typedef int(*serializer)(const char *hostname,
 
 static const serializer serializers[] = {
     &serialize_proc_stat,
+    &serialize_net_stat,
     &serialize_nic_stat,
     &serialize_memory_stat,
     NULL
@@ -146,9 +191,9 @@ int collect_stats(int fd, void *data) {
         *serializer != NULL;
         ++serializer) {
         size_t messagelen = sizeof(message);
-        HANDLE_POSIX_RESULT((*serializer)(context->hostname, &ts, message, &messagelen),
-                            goto NEXT_SERIALIZER, "collect_stats: serializer %p failed",
-                            *serializer);
+        HANDLE_RESULT((*serializer)(context->hostname, &ts, message, &messagelen) < 0,
+                      goto NEXT_SERIALIZER, "collect_stats: serializer %p failed",
+                      *serializer);
         assert(message[messagelen] == 0);
         HANDLE_POSIX_RESULT(send(context->sink, message, messagelen, 0),
                             (void)context->sink, "collect_stats: send");

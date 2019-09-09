@@ -310,9 +310,9 @@ int influxdb_serialize_proc_stat(char *stat,
                                  const char *hostname,
                                  const struct timespec *ts,
                                  char *buf, size_t *buflen) {
-    assert(ts != NULL);
     assert(stat != NULL);
     assert(hostname != NULL);
+    assert(ts != NULL);
     assert(buf != NULL);
     assert(buflen != NULL);
 
@@ -378,6 +378,100 @@ int influxdb_serialize_proc_stat(char *stat,
         NEXT_TOKEN:
                 buf[offset] = 0;
             }
+        }
+    }
+    assert(buf[offset] == 0);
+    *buflen = offset;
+    return 0;
+}
+
+
+int influxdb_serialize_kv(char *keys, char *values,
+                          const char *hostname,
+                          char *buf, size_t *buflen) {
+    assert(keys != NULL);
+    assert(values != NULL);
+    assert(hostname != NULL);
+    assert(buf != NULL);
+    assert(buflen != NULL);
+
+    size_t len = *buflen;
+
+    char *kstash = NULL;
+    char *vstash = NULL;
+
+    char *ktag = strtok_r(keys, ": ", &kstash);
+    char *vtag = strtok_r(values, ": ", &vstash);
+    HANDLE_RESULT(ktag == NULL || vtag == NULL || strcmp(ktag, vtag) != 0,
+                  return -1, "influxdb_serialize_kv: tag mismatch - "
+                  "key=%s, value=%s\n", ktag, vtag);
+
+    HANDLE_RESULT(format(&buf, &len, "%s,hostname=%s ", ktag, hostname) == -1,
+                  return -1, "influxdb_serialize_kv: tag=%s", ktag);
+    assert(*buf == 0);
+
+    char *key = strtok_r(NULL, " ", &kstash);
+    char *value = strtok_r(NULL, " ", &vstash);
+    while(key != NULL && value != NULL) {
+        HANDLE_RESULT(format(&buf, &len, "%s=%s,", key, value) == -1,
+                      return -1, "influxdb_serialize_kv: %s=%s", key, value);
+        assert(*buf == 0);
+        key = strtok_r(NULL, " ", &kstash);
+        value = strtok_r(NULL, " ", &vstash);
+    }
+
+    HANDLE_RESULT(key != NULL,
+                  return -1, "influxdb_serialize_kv: too many keys");
+    HANDLE_RESULT(value != NULL,
+                  return -1, "influxdb_serialize_kv: too many values");
+
+    assert(*buf == 0);
+    if(*(buf - 1) == ',') *(buf - 1) = ' ';
+    *buflen -= len;
+    return 0;
+}
+
+int influxdb_serialize_net_stat(char *stat,
+                                const char **tags,
+                                const char *hostname,
+                                const struct timespec *ts,
+                                char *buf, size_t *buflen) {
+    assert(stat != NULL);
+    assert(tags != NULL);
+    assert(hostname != NULL);
+    assert(ts != NULL);
+    assert(buf != NULL);
+    assert(buflen != NULL);
+
+    size_t offset = 0;
+    char *stash = NULL;
+    for(char *names = strtok_r(stat, "\n", &stash), *values = strtok_r(NULL, "\n", &stash);
+        names != NULL && values != NULL;
+        names = strtok_r(NULL, "\n", &stash), values = strtok_r(NULL, "\n", &stash)) {
+        for(const char **tag = tags; *tag != NULL; ++tag) {
+            if(strncmp(names, *tag, strlen(*tag)) != 0 || *(names + strlen(*tag)) != ':') {
+                continue;
+            }
+            char *b = buf + offset;
+            size_t blen = *buflen - offset;
+            size_t clen = blen;
+            HANDLE_RESULT(influxdb_serialize_kv(names, values, hostname, b, &clen) == -1,
+                          goto NEXT_TOKEN,
+                          "influxdb_serialize_net_stat[%s]: "
+                          "failed to serialize content", *tag);
+            b += clen;
+            blen -= clen;
+            assert(*b == 0);
+            HANDLE_RESULT(format(&b, &blen, "%ld%09ld\n",
+                                 ts->tv_sec, ts->tv_nsec) == -1,
+                          goto NEXT_TOKEN,
+                          "influxdb_serialize_net_stat[%s]: "
+                          "failed to serialize timestamp", *tag);
+            assert(*b == 0);
+            offset = *buflen - blen;
+            assert(buf[offset] == 0);
+        NEXT_TOKEN:
+            buf[offset] = 0;
         }
     }
     assert(buf[offset] == 0);
