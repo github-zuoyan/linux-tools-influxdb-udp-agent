@@ -1,4 +1,4 @@
-PLATFORM = $(shell uname -p)
+PLATFORM = $(shell ${CC} -dumpmachine)
 BINARY = influxdb_agent.${PLATFORM}
 
 SOURCES = \
